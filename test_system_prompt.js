@@ -1,4 +1,5 @@
-const AITool = require('./src/tools/ai/ai_tool.js');
+const path = require('path');
+const AITool = require(path.join(__dirname, 'src/tools/ai/ai_tool.js'));
 const aiTool = new AITool();
 
 async function testSystemPrompt() {
