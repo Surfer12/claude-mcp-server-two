@@ -1,21 +1,30 @@
-FROM node:20-alpine
+FROM python:3.11-slim
 
-# Install git
-RUN apk add --no-cache git
-
+# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
-RUN npm install --production
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy application code
 COPY . .
 
-# Expose the port
-EXPOSE 3000
+# Create directory for monitoring data
+RUN mkdir -p monitoring_data && chmod 777 monitoring_data
 
-# Start the server
-CMD ["node", "simple-server.js"]
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["python", "server.py"]
