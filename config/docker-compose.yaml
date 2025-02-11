@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build:
+      context: ..
+      dockerfile: config/dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../src:/app/src
+      - ../data:/app/data
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-dummy-key}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-dummy-key}

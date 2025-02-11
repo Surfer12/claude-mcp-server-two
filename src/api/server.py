@@ -41,7 +41,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Initialize MCP Tools
-mcp_tools = MCPTools(api_key=os.getenv("ANTHROPIC_API_KEY"))
+mcp_tools = MCPTools()
 
 # Security models
 class Token(BaseModel):
@@ -58,9 +58,20 @@ class User(BaseModel):
 class UserInDB(User):
     hashed_password: str
 
-# Command request model
+# Request models
+class CodeGenerationRequest(BaseModel):
+    """Model for code generation requests."""
+    prompt: str
+    provider: Optional[str] = "auto"
+    temperature: Optional[float] = 0.7
+
+class CodeAnalysisRequest(BaseModel):
+    """Model for code analysis requests."""
+    code: str
+    analysis_type: Optional[str] = "all"
+
 class CommandRequest(BaseModel):
-    """Model for command requests."""
+    """Model for general command requests."""
     type: str
     prompt: Optional[str] = None
     analysis_type: Optional[str] = None
@@ -136,12 +147,42 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/generate")
+async def generate_code(
+    request: CodeGenerationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate code using specified provider."""
+    try:
+        result = await mcp_tools.process_command({
+            "type": "code_generation",
+            **request.dict()
+        })
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze")
+async def analyze_code(
+    request: CodeAnalysisRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Analyze code structure and patterns."""
+    try:
+        result = await mcp_tools.process_command({
+            "type": "code_analysis",
+            **request.dict()
+        })
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/command")
 async def handle_command(
     request: CommandRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """Handle MCP commands with monitoring."""
+    """Handle general MCP commands with monitoring."""
     try:
         result = await mcp_tools.process_command(request.dict())
         return JSONResponse(content=result)

@@ -14,17 +14,18 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY src/ /app/src/
+COPY config/ /app/config/
 
 # Create directory for monitoring data
-RUN mkdir -p monitoring_data && chmod 777 monitoring_data
+RUN mkdir -p /app/data/monitoring && chmod 777 /app/data/monitoring
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+ENV PYTHONPATH=/app
 
 # Expose port
-EXPOSE 8000
+EXPOSE 3000
 
 # Run the application
-CMD ["python", "server.py"]
+CMD ["python", "src/api/server.py"]
