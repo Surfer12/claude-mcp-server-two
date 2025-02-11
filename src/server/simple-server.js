@@ -1,9 +1,11 @@
 const http = require('http');
-const { OpenAI } = require('openai');
-const AITool = require('../tools/ai/ai_tool');
 const dotenv = require('dotenv');
 const dotenvExpand = require('dotenv-expand');
-require('dotenv').config({ path: 'config/.env' });
+const path = require('path');
+const fs = require('fs');
+
+// Get the root directory of the project
+const rootDir = path.resolve(__dirname, '../..');
 
 // Dynamically load environment configuration
 const loadEnvironmentConfig = () => {
@@ -16,7 +18,7 @@ const loadEnvironmentConfig = () => {
   ];
 
   envFiles.forEach(file => {
-    const result = dotenv.config({ path: file });
+    const result = dotenv.config({ path: path.join(rootDir, file) });
     if (result.error) {
       console.warn(`Could not load environment file: ${file}`);
     } else {
@@ -29,103 +31,46 @@ loadEnvironmentConfig();
 
 // Now you can access environment variables via process.env
 const PORT = process.env.PORT || 3000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Initialize AI tools
-let aiTool;
-try {
-  aiTool = new AITool();
-  console.log('AI Tool initialized successfully');
-} catch (error) {
-  console.warn('Failed to initialize AI Tool:', error.message);
-  console.warn('Server will start but AI functionality will be limited');
-}
+// Initialize tools with error handling
+const tools = {};
 
-// Define available tools in Cursor's MCP format
-const availableTools = [
-  {
-    id: "llm_code_generate",
-    name: "Generate Code",
-    description: "Generate code using AI",
-    type: "function",
-    schema: {
-      type: "object",
-      required: ["prompt"],
-      properties: {
-        prompt: { type: "string", description: "The code generation prompt" },
-        context: { type: "object", description: "Additional context for code generation" },
-        options: { type: "object", description: "Additional options for generation" }
-      }
-    }
-  },
-  {
-    id: "analyze_code",
-    name: "Analyze Code",
-    description: "Analyze existing code",
-    type: "function",
-    schema: {
-      type: "object",
-      required: ["code"],
-      properties: {
-        code: { type: "string", description: "The code to analyze" },
-        analysisType: { type: "string", description: "Type of analysis to perform" }
-      }
-    }
-  },
-  {
-    id: "enhance_documentation",
-    name: "Enhance Documentation",
-    description: "Enhance code documentation",
-    type: "function",
-    schema: {
-      type: "object",
-      required: ["code"],
-      properties: {
-        code: { type: "string", description: "The code to document" },
-        docStyle: { type: "string", description: "Documentation style to use" },
-        includeExamples: { type: "boolean", description: "Whether to include examples" }
-      }
-    }
-  },
-  {
-    id: "suggest_improvements",
-    name: "Suggest Improvements",
-    description: "Suggest code improvements",
-    type: "function",
-    schema: {
-      type: "object",
-      required: ["code"],
-      properties: {
-        code: { type: "string", description: "The code to improve" },
-        focusAreas: { type: "array", items: { type: "string" }, description: "Areas to focus improvements on" }
-      }
-    }
-  },
-  {
-    id: "generate",
-    name: "Generate Text",
-    description: "General text generation",
-    type: "function",
-    schema: {
-      type: "object",
-      required: ["prompt"],
-      properties: {
-        prompt: { type: "string", description: "The generation prompt" }
+// Function to load tools from a directory
+const loadToolsFromDirectory = async (directory) => {
+  const toolsPath = path.join(__dirname, '../tools', directory);
+  if (!fs.existsSync(toolsPath)) return;
+
+  const files = fs.readdirSync(toolsPath);
+  for (const file of files) {
+    if (file.endsWith('_tool.js')) {
+      try {
+        const Tool = require(path.join(toolsPath, file));
+        const toolName = file.replace('_tool.js', '');
+        tools[toolName] = new Tool();
+        console.log(`${directory}/${toolName} Tool initialized successfully`);
+      } catch (error) {
+        console.warn(`Failed to initialize ${directory}/${file}:`, error.message);
       }
     }
   }
-];
+};
 
-// Track active SSE connections
-const activeConnections = new Set();
+// Load all tools
+const toolDirectories = ['ai', 'web', 'google', 'meta', 'pattern', 'workflow', 'code'];
+Promise.all(toolDirectories.map(dir => loadToolsFromDirectory(dir)))
+  .then(() => {
+    console.log('All tools loaded. Available tools:', Object.keys(tools));
+  })
+  .catch(error => {
+    console.error('Error loading tools:', error);
+  });
 
-const server = http.createServer(async (req, res) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-
-  // Enable CORS
+// Create HTTP server
+const server = http.createServer((req, res) => {
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -134,168 +79,98 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Handle health check
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'healthy' }));
+  // Parse URL
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const path = url.pathname;
+
+  // Handle SSE endpoint
+  if (path === '/v1/sse' && req.method === 'GET') {
+    console.log(`${new Date().toISOString()} - GET /v1/sse`);
+    handleSSE(req, res);
     return;
   }
 
-  // Handle SSE connection request at dedicated endpoint
-  if (req.method === 'GET' && req.url === '/v1/sse' && req.headers.accept === 'text/event-stream') {
-    // Clean up old connections if they exist
-    if (activeConnections.has(req.socket)) {
-      console.log('Cleaning up existing connection');
-      req.socket.end();
-      activeConnections.delete(req.socket);
-    }
-
-    console.log('SSE connection established');
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
-    });
-
-    // Add this connection to active connections
-    activeConnections.add(req.socket);
-
-    // Send initial connection message with tools
-    res.write(`data: ${JSON.stringify({
-      type: "connection_established",
-      tools: availableTools,
-      version: "1.0.0",
-      protocol: "mcp"
-    })}\n\n`);
-
-    // Keep connection alive
-    const keepAlive = setInterval(() => {
-      if (res.writeable) {
-        res.write('data: {"type": "keep_alive"}\n\n');
-      }
-    }, 30000);
-
-    // Handle client disconnect
-    req.on('close', () => {
-      console.log('SSE connection closed');
-      clearInterval(keepAlive);
-      activeConnections.delete(req.socket);
-    });
-
-    return;
-  }
-
-  // Handle tool invocations
-  if (req.method === 'POST' && req.url.startsWith('/v1/tools/')) {
-    if (!aiTool) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status: "error",
-        message: "AI functionality is not available. Please check your API keys."
-      }));
-      return;
-    }
+  // Handle other endpoints
+  if (req.method === 'POST') {
+    console.log(`${new Date().toISOString()} - POST ${path}`);
     let body = '';
     req.on('data', chunk => {
       body += chunk.toString();
     });
-
     req.on('end', async () => {
-      console.log('Request body:', body);
       try {
-        const { prompt, code, context = {}, options = {} } = JSON.parse(body);
-        const toolId = req.url.split('/').pop(); // Get the tool ID from the URL
+        const data = JSON.parse(body);
+        let response = { error: 'Endpoint not found' };
 
-        let response;
-        switch (toolId) {
-          case 'llm_code_generate':
-            response = await aiTool.generateResponse({
-              prompt,
-              responseFormat: 'code',
-              ...options
-            });
-            break;
-
-          case 'analyze_code':
-            response = await aiTool.analyzeCode({
-              code: code || prompt,
-              ...options
-            });
-            break;
-
-          case 'enhance_documentation':
-            response = await aiTool.enhanceDocumentation({
-              code: code || prompt,
-              ...options
-            });
-            break;
-
-          case 'suggest_improvements':
-            response = await aiTool.suggestImprovements({
-              code: code || prompt,
-              ...options
-            });
-            break;
-
-          case 'generate':
-            response = await aiTool.generateResponse({
-              prompt,
-              ...options
-            });
-            break;
-
-          default:
-            console.log('Tool not found:', toolId);
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: "error", message: "Tool not found" }));
-            return;
+        // Route to appropriate tool handler
+        if (path.startsWith('/v1/tools/')) {
+          const toolName = path.split('/')[3];
+          response = await handleToolRequest(toolName, data);
         }
 
-        if (response.success) {
-          console.log('Success response:', response.metadata);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            status: "success",
-            result: response.text,
-            metadata: response.metadata
-          }));
-        } else {
-          console.error('Error response:', response.error);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            status: "error",
-            message: response.error,
-            metadata: response.metadata
-          }));
-        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response));
       } catch (error) {
-        console.error("Error processing request:", error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: "error", message: error.message }));
+        res.end(JSON.stringify({ error: error.message }));
       }
     });
-  } else if (req.method !== 'GET' || !req.url.startsWith('/v1/sse')) {
-    res.writeHead(404);
-    res.end();
+    return;
   }
+
+  // Handle unknown endpoints
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-// Error handling for the server
-server.on('error', (error) => {
-  console.error('Server error:', error);
-  if (error.code === 'EADDRINUSE') {
-    console.error('Port 3000 is already in use. Please close other instances or use a different port.');
-    process.exit(1);
-  }
-});
-
+// Start server
 server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
   console.log('Available endpoints:');
   console.log('- GET  /v1/sse                       : SSE connection');
-  console.log('- POST /v1/tools/llm_code_generate    : Generate code');
-  console.log('- POST /v1/tools/analyze_code         : Analyze existing code');
-  console.log('- POST /v1/tools/enhance_documentation: Enhance code documentation');
-  console.log('- POST /v1/tools/suggest_improvements : Suggest code improvements');
-  console.log('- POST /v1/tools/generate            : General text generation');
+  console.log('- POST /v1/tools/:toolName           : Generic tool endpoint');
+  console.log('\nAvailable tools will be listed after initialization.');
 });
+
+// Handle SSE connections
+function handleSSE(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(':\n\n');
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+  });
+
+  console.log('SSE connection established');
+}
+
+// Handle tool requests
+async function handleToolRequest(toolName, data) {
+  // Get the tool instance
+  const tool = tools[toolName];
+
+  if (!tool) {
+    return {
+      error: `Tool not found: ${toolName}`,
+      available_tools: Object.keys(tools)
+    };
+  }
+
+  try {
+    // All tools should implement a process method
+    return await tool.process(data);
+  } catch (error) {
+    console.error(`Error processing ${toolName} request:`, error);
+    return {
+      error: `Failed to process ${toolName} request: ${error.message}`,
+      available_tools: Object.keys(tools)
+    };
+  }
+}
