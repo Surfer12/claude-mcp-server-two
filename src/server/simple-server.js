@@ -1,7 +1,35 @@
 const http = require('http');
 const { OpenAI } = require('openai');
 const AITool = require('../tools/ai/ai_tool');
+const dotenv = require('dotenv');
+const dotenvExpand = require('dotenv-expand');
 require('dotenv').config({ path: 'config/.env' });
+
+// Dynamically load environment configuration
+const loadEnvironmentConfig = () => {
+  const environment = process.env.NODE_ENV || 'development';
+  const envFiles = [
+    `.env.${environment}.local`,
+    `.env.${environment}`,
+    '.env.local',
+    '.env'
+  ];
+
+  envFiles.forEach(file => {
+    const result = dotenv.config({ path: file });
+    if (result.error) {
+      console.warn(`Could not load environment file: ${file}`);
+    } else {
+      dotenvExpand.expand(result);
+    }
+  });
+};
+
+loadEnvironmentConfig();
+
+// Now you can access environment variables via process.env
+const PORT = process.env.PORT || 3000;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Initialize AI tools
 let aiTool;
@@ -261,7 +289,6 @@ server.on('error', (error) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
   console.log('Available endpoints:');
