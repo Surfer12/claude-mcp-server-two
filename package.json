@@ -10,7 +10,7 @@
     "docker": "docker-compose -f config/docker-compose.yaml up"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.17.1",
+    "@anthropic-ai/sdk": "^0.17.2",
     "axios": "^1.6.7",
     "cheerio": "^1.0.0-rc.12",
     "openai": "^4.83.0"
