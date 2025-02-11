@@ -9,7 +9,7 @@
     "dev": "node simple-server.js"
   },
   "dependencies": {
-    "openai": "^4.28.0"
+    "openai": "^4.83.0"
   },
   "keywords": [
     "mcp",
