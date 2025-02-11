@@ -1,4 +1,4 @@
-const EventEmitter = require('events');
+import { EventEmitter } from 'events';
 
 class MetaCognitiveState {
     constructor() {
@@ -39,7 +39,7 @@ class MetaCognitiveState {
     }
 }
 
-class MetaCognitiveTool extends EventEmitter {
+export class MetaCognitiveTool extends EventEmitter {
     constructor(config = {}) {
         super();
         this.config = {
@@ -226,8 +226,3 @@ class MetaCognitiveTool extends EventEmitter {
         return recommendations;
     }
 }
-
-module.exports = {
-    MetaCognitiveTool,
-    MetaCognitiveState
-};

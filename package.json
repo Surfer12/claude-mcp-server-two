@@ -2,9 +2,11 @@
   "name": "claude-mcp-server",
   "version": "1.0.0",
   "description": "Claude MCP Server with integrated tools",
-  "main": "src/server/simple-server.js",
+  "type": "module",
+  "main": "src/tools/integrated/sequential_thinking_web.js",
   "scripts": {
-    "start": "node src/server/simple-server.js",
+    "start": "node src/tools/integrated/sequential_thinking_web.js",
+    "dev": "node --watch src/tools/integrated/sequential_thinking_web.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -17,11 +19,14 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.10.2",
     "@google/generative-ai": "^0.1.3",
-    "axios": "^1.6.7",
+    "@modelcontextprotocol/sdk": "latest",
+    "axios": "^1.7.9",
     "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
     "dotenv-expand": "^10.0.0",
-    "openai": "^4.26.0"
+    "express": "^4.18.2",
+    "openai": "^4.83.0"
   },
   "devDependencies": {
     "@babel/core": "^7.23.9",
@@ -74,5 +79,18 @@
     "node": ">=18.0.0"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Surfer12/claude-mcp-server-two.git"
+  },
+  "keywords": [],
+  "bugs": {
+    "url": "https://github.com/Surfer12/claude-mcp-server-two/issues"
+  },
+  "homepage": "https://github.com/Surfer12/claude-mcp-server-two#readme"
 }

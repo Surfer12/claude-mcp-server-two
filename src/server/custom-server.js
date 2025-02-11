@@ -1,38 +1,32 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { JSONRPCError } from "@modelcontextprotocol/sdk/dist/esm/errors.js";
-import { Server } from "@modelcontextprotocol/sdk/dist/esm/server/index.js";
-import fs from 'fs/promises';
+import dotenv from 'dotenv';
+import http from 'http';
 import OpenAI from 'openai';
-import os from 'os';
-import path from 'path';
+import { MetaCognitiveTool } from '../tools/meta/meta_cognitive_tool.js';
+import { ToolRegistry } from '../tools/tool_registry.js';
+import { Logger } from '../utils/logger.js';
 
-// Logging Utility
-class Logger {
-  static log(level, message, metadata = {}) {
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level,
-      message,
-      ...metadata
-    };
-    console.log(JSON.stringify(logEntry));
+// Load environment variables
+dotenv.config();
 
-    try {
-      const logDir = path.join(os.homedir(), '.cursor-mcp-logs');
-      fs.mkdir(logDir, { recursive: true }).catch(console.error);
+// MCP Protocol Constants
+const MCP_VERSION = '1.0.0';
+const MCP_CAPABILITIES = {
+  codeGeneration: true,
+  codeAnalysis: true,
+  metaCognition: true,
+  performanceMonitoring: true,
+  tools: true
+};
 
-      const logFile = path.join(logDir, `cursor-mcp-${new Date().toISOString().split('T')[0]}.log`);
-      fs.appendFile(logFile, JSON.stringify(logEntry) + '\n').catch(console.error);
-    } catch (error) {
-      console.error('Logging error:', error);
-    }
-  }
-
-  static info(message, metadata) { this.log('INFO', message, metadata); }
-  static error(message, metadata) { this.log('ERROR', message, metadata); }
-  static warn(message, metadata) { this.log('WARN', message, metadata); }
-}
+// Log environment variables (without sensitive values)
+Logger.info('Environment loaded', {
+  hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+  hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+  hasGoogleKey: !!process.env.GOOGLE_API_KEY,
+  port: process.env.PORT
+});
 
 // LLM Provider Abstract Class
 class LLMProvider {
@@ -50,6 +44,10 @@ class LLMProvider {
 
   async codeReview(code, language) {
     throw new Error('Code review method must be implemented by subclass');
+  }
+
+  async analyzeCode(code, options = {}) {
+    throw new Error('Code analysis method must be implemented by subclass');
   }
 }
 
@@ -95,56 +93,149 @@ class OpenAIProvider extends LLMProvider {
 
     return this.chat([{ role: 'user', content: prompt }]);
   }
+
+  async analyzeCode(code, options = {}) {
+    const analysisTypes = options.types || ['complexity', 'patterns', 'security'];
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are an expert code analyzer. Analyze the provided code and return structured insights.'
+      },
+      {
+        role: 'user',
+        content: `Analyze this code focusing on ${analysisTypes.join(', ')}:
+
+        \`\`\`
+        ${code}
+        \`\`\`
+
+        Provide analysis in JSON format with metrics and recommendations.`
+      }
+    ];
+
+    const response = await this.chat(messages, {
+      model: 'gpt-4-turbo',
+      temperature: 0.3
+    });
+
+    try {
+      return JSON.parse(response);
+    } catch (error) {
+      return {
+        error: 'Failed to parse analysis response',
+        rawResponse: response
+      };
+    }
+  }
 }
 
 // Anthropic Provider Implementation
 class AnthropicProvider extends LLMProvider {
   constructor(apiKey) {
     super({ apiKey });
-    this.client = new Anthropic({ apiKey });
+    this.client = new Anthropic({
+      apiKey: apiKey,
+      maxRetries: 3
+    });
+    Logger.info('Anthropic provider initialized');
   }
 
   async chat(messages, options = {}) {
-    const response = await this.client.messages.create({
-      model: options.model || "claude-2",
-      max_tokens: options.max_tokens || 4096,
-      messages,
-      ...options
-    });
-    return response.content[0].text;
+    Logger.info('Preparing Anthropic request', { messageCount: messages.length });
+    try {
+      const response = await this.client.messages.create({
+        model: options.model || "claude-3-5-sonnet-20241022",
+        max_tokens: options.max_tokens || 4096,
+        temperature: options.temperature || 0.7,
+        messages: messages.map(msg => ({
+          role: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.content
+        }))
+      });
+      Logger.info('Anthropic request successful');
+      return response.content[0].text;
+    } catch (error) {
+      Logger.error('Anthropic API error', {
+        error: error.message,
+        stack: error.stack,
+        messages: messages.map(m => ({ role: m.role }))
+      });
+      throw error;
+    }
   }
 
   async generateCode(prompt, context) {
     const messages = [
-      { role: 'user', content: `Generate high-quality code based on this prompt and context.
+      {
+        role: 'user',
+        content: `Generate high-quality code based on this prompt and context.
 
-      Prompt: ${prompt}
-      Context: ${JSON.stringify(context)}` }
+        Prompt: ${prompt}
+        Context: ${JSON.stringify(context)}
+
+        Please provide clean, efficient, and well-documented code.`
+      }
     ];
     return this.chat(messages, {
-      model: 'claude-2',
+      model: 'claude-3-sonnet',
       temperature: 0.7
     });
   }
 
   async codeReview(code, language) {
-    const messages = [{
-      role: 'user',
-      content: `Perform a detailed code review for this ${language} code:
+    const messages = [
+      {
+        role: 'user',
+        content: `Perform a detailed code review for this ${language} code:
 
-      \`\`\`${language}
-      ${code}
-      \`\`\`
+        \`\`\`${language}
+        ${code}
+        \`\`\`
 
-      Please analyze:
-      - Potential logical errors
-      - Performance considerations
-      - Security implications
-      - Idiomatic language usage
-      - Possible refactoring opportunities`
-    }];
-
+        Please analyze:
+        - Potential logical errors
+        - Performance considerations
+        - Security implications
+        - Idiomatic language usage
+        - Possible refactoring opportunities`
+      }
+    ];
     return this.chat(messages);
+  }
+
+  async analyzeCode(code, options = {}) {
+    const analysisTypes = options.types || ['complexity', 'patterns', 'security'];
+    const messages = [
+      {
+        role: 'user',
+        content: `As an expert code analyzer, analyze this code focusing on ${analysisTypes.join(', ')}:
+
+        \`\`\`
+        ${code}
+        \`\`\`
+
+        Return a detailed analysis in JSON format including:
+        1. Complexity metrics (cyclomatic complexity, cognitive complexity)
+        2. Pattern recognition (design patterns, anti-patterns)
+        3. Security vulnerabilities
+        4. Performance considerations
+        5. Recommendations for improvement`
+      }
+    ];
+
+    const response = await this.chat(messages, {
+      model: 'claude-3-sonnet',
+      temperature: 0.3
+    });
+
+    try {
+      return JSON.parse(response);
+    } catch (error) {
+      return {
+        error: 'Failed to parse analysis response',
+        rawResponse: response
+      };
+    }
   }
 }
 
@@ -171,7 +262,8 @@ class GoogleGeminiProvider extends LLMProvider {
 
   async generateCode(prompt, context) {
     const messages = [
-      { role: 'user', content: `Generate professional code based on:
+      {
+        role: 'user', content: `Generate professional code based on:
 
       Prompt: ${prompt}
       Context: ${JSON.stringify(context)}
@@ -199,213 +291,333 @@ class GoogleGeminiProvider extends LLMProvider {
 
     return this.chat(messages);
   }
+
+  async analyzeCode(code, options = {}) {
+    // Implementation of analyzeCode method
+  }
 }
 
-// LLM Orchestrator
-class LLMOrchestrator {
-  constructor() {
-    this.providers = {
-      openai: null,
-      anthropic: null,
-      google: null
+// Custom error class for JSON-RPC errors
+class JSONRPCError extends Error {
+  constructor(code, message, data = null) {
+    super(message);
+    this.code = code;
+    this.data = data;
+    this.name = 'JSONRPCError';
+  }
+}
+
+// Server class implementation
+class Server {
+  constructor(config = {}) {
+    this.config = config;
+    this.providers = {};
+    this.metaCognitiveTool = new MetaCognitiveTool(config.metaCognitive);
+    this.toolRegistry = new ToolRegistry();
+    this.setupProviders();
+
+    // Initialize MCP state
+    this.mcpState = {
+      version: MCP_VERSION,
+      capabilities: MCP_CAPABILITIES,
+      activeProviders: [],
+      sessionMetrics: [],
+      availableTools: this.toolRegistry.getAllTools()
     };
   }
 
-  initialize(config) {
-    if (config.openai?.apiKey) {
-      this.providers.openai = new OpenAIProvider(config.openai.apiKey);
+  setupProviders() {
+    if (process.env.OPENAI_API_KEY) {
+      this.providers.openai = new OpenAIProvider(process.env.OPENAI_API_KEY);
+      this.mcpState.activeProviders.push('openai');
     }
-    if (config.anthropic?.apiKey) {
-      this.providers.anthropic = new AnthropicProvider(config.anthropic.apiKey);
+    if (process.env.ANTHROPIC_API_KEY) {
+      this.providers.anthropic = new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
+      this.mcpState.activeProviders.push('anthropic');
     }
-    if (config.google?.apiKey) {
-      this.providers.google = new GoogleGeminiProvider(config.google.apiKey);
+    if (process.env.GOOGLE_API_KEY) {
+      this.providers.google = new GoogleGeminiProvider(process.env.GOOGLE_API_KEY);
+      this.mcpState.activeProviders.push('google');
     }
   }
 
-  async selectBestProvider(task) {
-    const activeProviders = Object.values(this.providers).filter(p => p !== null);
+  async handleRequest(method, params) {
+    try {
+      // Track request in meta-cognitive system
+      const requestContext = {
+        method,
+        timestamp: new Date().toISOString(),
+        params: { ...params, sensitive: undefined }
+      };
 
-    if (activeProviders.length === 0) {
-      throw new Error('No LLM providers configured');
+      await this.metaCognitiveTool.analyze(requestContext);
+
+      // Handle MCP-specific methods
+      if (method === 'mcp.getCapabilities') {
+        return this.getMCPCapabilities();
+      } else if (method === 'mcp.getState') {
+        return this.getMCPState();
+      } else if (method === 'mcp.listTools') {
+        return this.listTools();
+      } else if (method === 'mcp.executeTool') {
+        return this.executeTool(params);
+      }
+
+      // Handle standard methods
+      const result = await this.handleStandardMethod(method, params);
+
+      // Update metrics
+      this.updateMetrics(method, result);
+
+      return result;
+    } catch (error) {
+      Logger.error('Request error', { method, error: error.message });
+      throw error;
+    }
+  }
+
+  async handleStandardMethod(method, params) {
+    switch (method) {
+      case 'chat':
+        return await this.handleChat(params);
+      case 'generateCode':
+        return await this.handleGenerateCode(params);
+      case 'codeReview':
+        return await this.handleCodeReview(params);
+      case 'analyzeCode':
+        return await this.handleCodeAnalysis(params);
+      default:
+        throw new JSONRPCError(-32601, `Method ${method} not found`);
+    }
+  }
+
+  getMCPCapabilities() {
+    return {
+      version: this.mcpState.version,
+      capabilities: this.mcpState.capabilities,
+      providers: this.mcpState.activeProviders,
+      supportedMethods: [
+        'chat',
+        'generateCode',
+        'codeReview',
+        'analyzeCode',
+        'mcp.getCapabilities',
+        'mcp.getState',
+        'mcp.listTools',
+        'mcp.executeTool'
+      ],
+      tools: this.mcpState.availableTools
+    };
+  }
+
+  getMCPState() {
+    return {
+      ...this.mcpState,
+      metaCognitive: this.metaCognitiveTool.state.getState(),
+      metrics: this.getAggregatedMetrics()
+    };
+  }
+
+  updateMetrics(method, result) {
+    const metric = {
+      timestamp: new Date().toISOString(),
+      method,
+      success: !result.error,
+      duration: result.duration,
+      provider: result.provider
+    };
+
+    this.mcpState.sessionMetrics.push(metric);
+
+    // Maintain reasonable history size
+    if (this.mcpState.sessionMetrics.length > 1000) {
+      this.mcpState.sessionMetrics = this.mcpState.sessionMetrics.slice(-1000);
+    }
+  }
+
+  getAggregatedMetrics() {
+    const metrics = this.mcpState.sessionMetrics;
+    return {
+      totalRequests: metrics.length,
+      successRate: metrics.filter(m => m.success).length / metrics.length,
+      methodDistribution: this.getMethodDistribution(metrics),
+      averageDuration: this.getAverageDuration(metrics)
+    };
+  }
+
+  getMethodDistribution(metrics) {
+    return metrics.reduce((acc, metric) => {
+      acc[metric.method] = (acc[metric.method] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  getAverageDuration(metrics) {
+    if (metrics.length === 0) return 0;
+    const sum = metrics.reduce((acc, metric) => acc + (metric.duration || 0), 0);
+    return sum / metrics.length;
+  }
+
+  async handleChat(params) {
+    const provider = await this.selectProvider(params.options?.model);
+    return provider.chat(params.messages, params.options);
+  }
+
+  async handleGenerateCode(params) {
+    const provider = await this.selectProvider(params.options?.model);
+    return provider.generateCode(params.prompt, params.context);
+  }
+
+  async handleCodeReview(params) {
+    const provider = await this.selectProvider(params.options?.model);
+    return provider.codeReview(params.code, params.language);
+  }
+
+  async handleCodeAnalysis(params) {
+    const provider = await this.selectProvider(params.options?.model);
+    const startTime = process.hrtime();
+
+    try {
+      const analysis = await provider.analyzeCode(params.code, params.options);
+
+      // Calculate duration
+      const [seconds, nanoseconds] = process.hrtime(startTime);
+      const duration = seconds * 1000 + nanoseconds / 1000000; // Convert to ms
+
+      // Enhance analysis with meta-cognitive insights
+      const enhancedAnalysis = await this.metaCognitiveTool.analyze({
+        type: 'code_analysis',
+        input: params,
+        result: analysis,
+        duration
+      });
+
+      return {
+        success: true,
+        provider: provider.constructor.name,
+        duration,
+        analysis,
+        insights: enhancedAnalysis
+      };
+    } catch (error) {
+      Logger.error('Code analysis error', {
+        error: error.message,
+        code: params.code.substring(0, 100) + '...' // Log only the beginning
+      });
+
+      throw new JSONRPCError(-32603, `Code analysis failed: ${error.message}`);
+    }
+  }
+
+  async selectProvider(model = '') {
+    if (model.startsWith('claude')) {
+      if (!this.providers.anthropic) {
+        throw new JSONRPCError(-32603, 'Anthropic provider not configured');
+      }
+      return this.providers.anthropic;
+    } else if (model.startsWith('gpt')) {
+      if (!this.providers.openai) {
+        throw new JSONRPCError(-32603, 'OpenAI provider not configured');
+      }
+      return this.providers.openai;
+    } else if (model.startsWith('gemini')) {
+      if (!this.providers.google) {
+        throw new JSONRPCError(-32603, 'Google provider not configured');
+      }
+      return this.providers.google;
     }
 
-    // Simple round-robin selection for demonstration
-    // In a real-world scenario, implement more sophisticated provider selection
-    const selectedProvider = activeProviders[Math.floor(Math.random() * activeProviders.length)];
-
-    Logger.info('Selected LLM Provider', {
-      provider: selectedProvider.constructor.name,
-      task
-    });
-
-    return selectedProvider;
+    // Default provider selection
+    const availableProviders = Object.values(this.providers);
+    if (availableProviders.length === 0) {
+      throw new JSONRPCError(-32603, 'No LLM providers configured');
+    }
+    return availableProviders[Math.floor(Math.random() * availableProviders.length)];
   }
 
-  async chat(messages, options = {}) {
-    const provider = await this.selectBestProvider('chat');
-    return provider.chat(messages, options);
+  listTools() {
+    return {
+      success: true,
+      tools: this.mcpState.availableTools
+    };
   }
 
-  async generateCode(prompt, context) {
-    const provider = await this.selectBestProvider('code_generation');
-    return provider.generateCode(prompt, context);
-  }
+  async executeTool(params) {
+    const { tool, method, parameters } = params;
 
-  async codeReview(code, language) {
-    const provider = await this.selectBestProvider('code_review');
-    return provider.codeReview(code, language);
+    if (!tool || !method) {
+      throw new JSONRPCError(-32602, 'Tool and method names are required');
+    }
+
+    try {
+      const result = await this.toolRegistry.executeToolMethod(tool, method, parameters);
+      return {
+        success: true,
+        tool,
+        method,
+        result
+      };
+    } catch (error) {
+      throw new JSONRPCError(-32603, `Tool execution failed: ${error.message}`);
+    }
   }
 }
 
-// Configuration and Server Setup
-const llmOrchestrator = new LLMOrchestrator();
-
-const serverConfig = {
-  name: "cursor-mcp-llm-server",
-  version: "0.2.0",
-  features: [
-    "multi_llm_interface",
-    "code_generation",
-    "code_review",
-    "context_aware_completion"
-  ]
-};
-
-const tools = {
-  "llm_code_generate": {
-    description: "Generate code using multi-provider LLM approach",
-    schema: {
-      prompt: { type: "string", required: true },
-      context: {
-        type: "object",
-        properties: {
-          language: { type: "string" },
-          projectStructure: { type: "object" }
-        }
-      }
-    },
-    callback: async ({ prompt, context = {} }) => {
-      try {
-        Logger.info("Code generation requested", {
-          prompt: prompt.slice(0, 100),
-          language: context.language
-        });
-
-        const generatedCode = await llmOrchestrator.generateCode(prompt, context);
-
-        return {
-          status: "success",
-          code: generatedCode,
-          metadata: {
-            provider: generatedCode.provider || 'unknown'
-          }
-        };
-      } catch (error) {
-        Logger.error("Code generation error", { error: error.message });
-        throw new JSONRPCError("GenerationError", error.message, 500);
-      }
-    }
-  },
-
-  "llm_code_review": {
-    description: "Perform code review using multi-provider LLM approach",
-    schema: {
-      code: { type: "string", required: true },
-      language: { type: "string", required: true }
-    },
-    callback: async ({ code, language }) => {
-      try {
-        Logger.info("Code review requested", {
-          codeLength: code.length,
-          language
-        });
-
-        const reviewResults = await llmOrchestrator.codeReview(code, language);
-
-        return {
-          status: "success",
-          review: reviewResults,
-          metadata: {
-            provider: reviewResults.provider || 'unknown'
-          }
-        };
-      } catch (error) {
-        Logger.error("Code review error", { error: error.message });
-        throw new JSONRPCError("ReviewError", error.message, 500);
-      }
-    }
-  },
-
-  "llm_context_chat": {
-    description: "Contextual chat with multi-provider LLM",
-    schema: {
-      messages: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            role: { type: "string", enum: ["user", "assistant", "system"] },
-            content: { type: "string" }
-          }
-        },
-        required: true
-      },
-      context: { type: "object" }
-    },
-    callback: async ({ messages, context = {} }) => {
-      try {
-        Logger.info("Contextual chat requested", {
-          messageCount: messages.length,
-          context: Object.keys(context)
-        });
-
-        const chatResponse = await llmOrchestrator.chat(messages, context);
-
-        return {
-          status: "success",
-          response: chatResponse,
-          metadata: {
-            provider: chatResponse.provider || 'unknown'
-          }
-        };
-      } catch (error) {
-        Logger.error("Contextual chat error", { error: error.message });
-        throw new JSONRPCError("ChatError", error.message, 500);
-      }
-    }
+// Create and start the server
+const server = new Server();
+const httpServer = http.createServer(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.writeHead(405);
+    res.end('Method not allowed');
+    return;
   }
-};
 
-// Server Initialization
-const startServer = async () => {
+  let requestData;
   try {
-    // Load LLM configurations from environment or config file
-    llmOrchestrator.initialize({
-      openai: { apiKey: process.env.OPENAI_API_KEY },
-      anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
-      google: { apiKey: process.env.GOOGLE_API_KEY }
-    });
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    requestData = JSON.parse(Buffer.concat(chunks).toString());
+    Logger.info('Received request', { method: requestData.method, params: requestData.params });
 
-    const server = new Server(serverConfig, { tools });
+    const result = await server.handleRequest(requestData.method, requestData.params);
+    Logger.info('Request successful', { result });
 
-    const PORT = process.env.MCP_PORT || 3000;
-    await server.listen(PORT);
-
-    Logger.info(`Multi-LLM MCP Server started successfully`, {
-      name: serverConfig.name,
-      version: serverConfig.version,
-      port: PORT,
-      availableTools: Object.keys(tools),
-      activeProviders: Object.keys(llmOrchestrator.providers)
-        .filter(key => llmOrchestrator.providers[key] !== null)
-    });
-
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      jsonrpc: '2.0',
+      result,
+      id: requestData.id
+    }));
   } catch (error) {
-    Logger.error("Failed to start Multi-LLM MCP server", { error: error.message });
-    process.exit(1);
-  }
-};
+    Logger.error('Server error', {
+      error: error.message,
+      stack: error.stack,
+      code: error.code
+    });
 
-// Run the server
-startServer().catch(console.error);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: error.code || -32603,
+        message: error.message,
+        data: error.data
+      },
+      id: requestData?.id
+    }));
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+httpServer.listen(PORT, () => {
+  Logger.info(`Server running on port ${PORT}`);
+});
+
+// Export for testing
+export {
+  AnthropicProvider,
+  GoogleGeminiProvider, JSONRPCError,
+  LLMProvider, Logger, OpenAIProvider, Server
+};

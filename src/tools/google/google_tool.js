@@ -1,4 +1,4 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 class GoogleTool {
     constructor() {
@@ -124,4 +124,4 @@ class GoogleTool {
     }
 }
 
-module.exports = GoogleTool;
+export { GoogleTool };

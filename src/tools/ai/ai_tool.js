@@ -1,5 +1,5 @@
-const OpenAI = require('openai');
-const Anthropic = require('@anthropic-ai/sdk');
+import { Anthropic } from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 class AITool {
     constructor() {
@@ -215,4 +215,4 @@ class AITool {
     }
 }
 
-module.exports = AITool;
+export { AITool };

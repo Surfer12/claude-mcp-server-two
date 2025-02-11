@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sequential Thinking with Claude</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .thought-input {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background: #0056b3;
+        }
+        .sequence {
+            margin-top: 20px;
+        }
+        .thought-item {
+            background: #f8f9fa;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .analysis {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sequential Thinking with Claude</h1>
+
+        <div>
+            <textarea
+                class="thought-input"
+                id="thoughtInput"
+                placeholder="Enter your thought here..."></textarea>
+        </div>
+
+        <div>
+            <button class="button" onclick="submitThought()">Submit Thought</button>
+            <button class="button" onclick="getAnalysis()">Get Analysis</button>
+            <button class="button" onclick="resetSequence()">Reset</button>
+        </div>
+
+        <div class="sequence" id="thoughtSequence">
+            <h2>Thought Sequence</h2>
+            <!-- Thoughts will be displayed here -->
+        </div>
+
+        <div class="analysis" id="analysisResult">
+            <h2>Analysis</h2>
+            <!-- Analysis will be displayed here -->
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let currentThoughtNumber = 0;
+
+        async function submitThought() {
+            const thoughtInput = document.getElementById('thoughtInput');
+            const thought = thoughtInput.value;
+
+            if (!thought) return;
+
+            currentThoughtNumber++;
+
+            try {
+                const response = await fetch(`${API_BASE}/think`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        thought,
+                        thoughtNumber: currentThoughtNumber,
+                        stage: 'thinking',
+                        tags: ['web-interface']
+                    })
+                });
+
+                const result = await response.json();
+                updateThoughtSequence(result);
+                thoughtInput.value = '';
+            } catch (error) {
+                console.error('Error submitting thought:', error);
+            }
+        }
+
+        async function getAnalysis() {
+            try {
+                const response = await fetch(`${API_BASE}/analysis`);
+                const analysis = await response.json();
+                updateAnalysis(analysis);
+            } catch (error) {
+                console.error('Error getting analysis:', error);
+            }
+        }
+
+        async function resetSequence() {
+            try {
+                await fetch(`${API_BASE}/reset`, { method: 'POST' });
+                document.getElementById('thoughtSequence').innerHTML = '<h2>Thought Sequence</h2>';
+                document.getElementById('analysisResult').innerHTML = '<h2>Analysis</h2>';
+                currentThoughtNumber = 0;
+            } catch (error) {
+                console.error('Error resetting sequence:', error);
+            }
+        }
+
+        function updateThoughtSequence(result) {
+            const sequence = document.getElementById('thoughtSequence');
+            const thoughtItem = document.createElement('div');
+            thoughtItem.className = 'thought-item';
+            thoughtItem.innerHTML = `
+                <strong>Thought ${result.step}:</strong>
+                <p>${result.data.thought}</p>
+                <small>Timestamp: ${result.timestamp}</small>
+            `;
+            sequence.appendChild(thoughtItem);
+        }
+
+        function updateAnalysis(analysis) {
+            const analysisDiv = document.getElementById('analysisResult');
+            analysisDiv.innerHTML = `
+                <h2>Analysis</h2>
+                <p>Patterns Found: ${analysis.results.patterns}</p>
+                <p>Adaptations: ${analysis.results.adaptations}</p>
+                <p>Metrics Collected: ${analysis.results.metrics}</p>
+                <p>Timestamp: ${analysis.timestamp}</p>
+            `;
+        }
+    </script>
+</body>
+</html>
