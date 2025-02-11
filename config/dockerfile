@@ -1,31 +1,26 @@
-FROM python:3.11-slim
+FROM node:18-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Copy package files
+COPY package*.json ./
 
-# Copy requirements first for better caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+RUN npm install
 
-# Copy application code
-COPY src/ /app/src/
-COPY config/ /app/config/
+# Copy source code and config
+COPY src/ ./src/
+COPY config/ ./config/
 
-# Create directory for monitoring data
-RUN mkdir -p /app/data/monitoring && chmod 777 /app/data/monitoring
+# Create data directory
+RUN mkdir -p data
 
 # Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+ENV NODE_ENV=production
+ENV PORT=3000
 
-# Expose port
+# Expose the port
 EXPOSE 3000
 
-# Run the application
-CMD ["python", "src/api/server.py"]
+# Start the server
+CMD ["node", "src/server/simple-server.js"]

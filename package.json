@@ -1,0 +1,27 @@
+{
+  "name": "claude-mcp-server",
+  "version": "0.2.0",
+  "description": "Multi-LLM MCP Server for Cursor IDE Integration",
+  "main": "src/server/simple-server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server/simple-server.js",
+    "dev": "node src/server/simple-server.js",
+    "docker": "docker-compose -f config/docker-compose.yaml up"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.17.1",
+    "axios": "^1.6.7",
+    "cheerio": "^1.0.0-rc.12",
+    "openai": "^4.83.0"
+  },
+  "keywords": [
+    "mcp",
+    "cursor",
+    "llm",
+    "ai",
+    "code-generation"
+  ],
+  "author": "",
+  "license": "MIT"
+}

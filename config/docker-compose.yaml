@@ -8,10 +8,11 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ../src:/app/src
-      - ../data:/app/data
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./config:/app/config
     env_file:
-      - .env
+      - config/.env
     environment:
       NODE_ENV: production
       PORT: 3000
