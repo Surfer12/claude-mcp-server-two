@@ -5,8 +5,9 @@
   "type": "module",
   "main": "src/tools/integrated/sequential_thinking_web.js",
   "scripts": {
-    "start": "node src/tools/integrated/sequential_thinking_web.js",
-    "dev": "node --watch src/tools/integrated/sequential_thinking_web.js",
+    "start": "node src/server/simple-server.cjs",
+    "dev": "node --watch src/server/simple-server.js",
+    "dev:custom": "node --watch src/server/custom-server.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -14,7 +15,11 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,json,md}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,json,md}\"",
-    "precommit": "lint-staged"
+    "precommit": "lint-staged",
+    "docker:build": "docker-compose build",
+    "docker:run": "docker-compose up",
+    "docker:run:dev": "docker-compose -f config/docker-compose.yaml up --build",
+    "start:python": "python src/api/server.py"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.10.2",
